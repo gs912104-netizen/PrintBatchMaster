@@ -366,44 +366,35 @@ namespace PrintBatchMaster
                 int margin = MmToPx(0, dpiX);
                 int gap = MmToPx(opt.SafeGapMm, dpiY);
 
-                // === 改用 Composite 貼純色矩形畫線 ===
-                // 為什麼不用 Drawables.Rectangle：
-                //   ImageMagick 的 path-based Rectangle 在邊界 anti-alias 行為不對稱
-                //   （左上邊 0 起算 vs 右下邊貼到 W/H 邊緣）→ 左上會比右下視覺上厚一點。
-                // 改用 new MagickImage(顏色, w, h) + canvas.Composite() 直接貼純色塊：
-                //   每塊都是精確 N×M 整數像素的純色，沒有 path/anti-alias/stroke，四邊絕對對稱。
+                // 線條顏色用 fill 不用 stroke
+                draw.StrokeColor(MagickColors.Transparent)
+                    .StrokeWidth(0)
+                    .FillColor(opt.LineColor);
 
-                // 把外框內縮邊距移到區塊外圍變數
-                int boxLeft = margin;
-                int boxTop = margin;
-                int boxW = W - 2 * margin;
-                int boxH = H - 2 * margin;
-
-                // === 外框：上下左右四條純色矩形 ===
-                // 上邊 (boxLeft, boxTop) 貼一塊 boxW × strokePx
-                PasteSolidRect(canvas, opt.LineColor, boxLeft, boxTop, boxW, strokePx);
-                // 下邊 (boxLeft, boxTop + boxH - strokePx) 貼一塊 boxW × strokePx
-                PasteSolidRect(canvas, opt.LineColor, boxLeft, boxTop + boxH - strokePx, boxW, strokePx);
-                // 左邊 (boxLeft, boxTop) 貼一塊 strokePx × boxH
-                PasteSolidRect(canvas, opt.LineColor, boxLeft, boxTop, strokePx, boxH);
-                // 右邊 (boxLeft + boxW - strokePx, boxTop) 貼一塊 strokePx × boxH
-                PasteSolidRect(canvas, opt.LineColor, boxLeft + boxW - strokePx, boxTop, strokePx, boxH);
-
-                // === 上方定位線（從 margin 到 pT - gap，水平中心對齊 cx）===
+                // === 上方定位線（垂直細矩形，從畫布頂端 margin 到原圖上邊緣往上 gap）===
                 int tLineEnd = pT - gap;
-                int tLineHeight = tLineEnd - margin;
-                if (tLineHeight > 0)
+                if (tLineEnd > margin)
                 {
-                    PasteSolidRect(canvas, opt.LineColor, cx - leftHalf, margin, strokePx, tLineHeight);
+                    draw.Rectangle(cx - leftHalf, margin, cx + rightHalf, tLineEnd);
                 }
 
-                // === 下方定位線（從 pT + imgH + gap 到 H - margin）===
+                // === 下方定位線（垂直細矩形，從原圖下邊緣往下 gap 到畫布底端 H - margin）===
                 int bLineStart = pT + imgH + gap;
-                int bLineHeight = (H - margin) - bLineStart;
-                if (bLineHeight > 0)
+                int bLineEnd = H - margin;
+                if (bLineEnd > bLineStart)
                 {
-                    PasteSolidRect(canvas, opt.LineColor, cx - leftHalf, bLineStart, strokePx, bLineHeight);
+                    draw.Rectangle(cx - leftHalf, bLineStart, cx + rightHalf, bLineEnd);
                 }
+
+                // === 外框：上下左右四條 fill 矩形，依 margin 內縮後緊貼 ===
+                // 上邊
+                draw.Rectangle(margin, margin, W - margin, margin + strokePx);
+                // 下邊
+                draw.Rectangle(margin, H - margin - strokePx, W - margin, H - margin);
+                // 左邊
+                draw.Rectangle(margin, margin, margin + strokePx, H - margin);
+                // 右邊
+                draw.Rectangle(W - margin - strokePx, margin, W - margin, H - margin);
 
                 if (opt.AddText)
                 {
