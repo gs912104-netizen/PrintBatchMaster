@@ -19,6 +19,9 @@ namespace PrintBatchMaster
     {
         private string configPath = Path.Combine(Application.StartupPath, "app_settings_v3.json");
 
+        // 跨 ProcessImage 記憶「已 log 過的 DPI」，避免每張圖都重複 log；StartProcessing 會清空
+        private HashSet<int> _loggedDpis = new HashSet<int>();
+
         // 定位線水平對齊基準：以「原始圖」的左/中/右為基準，不含 padding 邊框
         private enum LineHAlign { Left, Center, Right }
 
@@ -62,6 +65,76 @@ namespace PrintBatchMaster
             btnBrowseSource.Click += (s, e) => SelectFolder(txtSourceDir);
             btnBrowseOutput.Click += (s, e) => SelectFolder(txtOutputDir);
             btnStart.Click += async (s, e) => await StartProcessing();
+
+            // 顏色選擇器：開 ColorDialog → 寫回 TextBox(#RRGGBB) + 更新色塊
+            btnPickLineColor.Click += (s, e) => PickColor(txtLineColor, pnlLineColor);
+            btnPickTextColor.Click += (s, e) => PickColor(txtTextColor, pnlTextColor);
+
+            // TextBox 直接打字 → 嘗試解析 hex 即時刷新色塊
+            txtLineColor.TextChanged += (s, e) => RefreshColorPanel(txtLineColor, pnlLineColor);
+            txtTextColor.TextChanged += (s, e) => RefreshColorPanel(txtTextColor, pnlTextColor);
+        }
+
+        private void PickColor(TextBox tb, Panel preview)
+        {
+            using (var cd = new ColorDialog { FullOpen = true, AnyColor = true })
+            {
+                // 預設值用目前 TextBox 內的色碼
+                if (TryParseHex(tb.Text, out var current))
+                {
+                    cd.Color = current;
+                }
+                if (cd.ShowDialog(this) == DialogResult.OK)
+                {
+                    tb.Text = $"#{cd.Color.R:X2}{cd.Color.G:X2}{cd.Color.B:X2}";
+                    preview.BackColor = cd.Color;
+                }
+            }
+        }
+
+        private void RefreshColorPanel(TextBox tb, Panel preview)
+        {
+            if (TryParseHex(tb.Text, out var c)) preview.BackColor = c;
+        }
+
+        /// <summary>
+        /// 嘗試把 #RRGGBB / RRGGBB / #RGB / 標準色名 (e.g. "Red") 解析成 System.Drawing.Color。
+        /// </summary>
+        private bool TryParseHex(string text, out System.Drawing.Color color)
+        {
+            color = System.Drawing.Color.DimGray;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            try
+            {
+                string s = text.Trim();
+                if (!s.StartsWith("#") && System.Text.RegularExpressions.Regex.IsMatch(s, "^[0-9A-Fa-f]{3,8}$"))
+                {
+                    s = "#" + s;
+                }
+                color = System.Drawing.ColorTranslator.FromHtml(s);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// 把 TextBox 的色碼字串轉成 ImageMagick 用的 MagickColor；無法解析時回傳 fallback。
+        /// 用 hex 字串建構子，Q8/Q16 版皆相容。
+        /// </summary>
+        private MagickColor ParseMagickColor(string text, MagickColor fallback)
+        {
+            if (TryParseHex(text, out var c))
+            {
+                try
+                {
+                    return new MagickColor($"#{c.R:X2}{c.G:X2}{c.B:X2}{c.A:X2}");
+                }
+                catch
+                {
+                    return fallback;
+                }
+            }
+            return fallback;
         }
 
         private void SelectFolder(TextBox tb)
@@ -87,12 +160,8 @@ namespace PrintBatchMaster
                 TextXMm = (double)numTextX.Value,
                 TextYMm = (double)numTextY.Value,
                 AddText = chkAddText.Checked,
-                LineColor = rdoWhite.Checked ? MagickColors.White :
-                            rdoBlack.Checked ? MagickColors.Black :
-                            MagickColors.DimGray,
-                TextColor = rdotxtWhite.Checked ? MagickColors.White :
-                            rdotxtBlack.Checked ? MagickColors.Black :
-                            MagickColors.DimGray,
+                LineColor = ParseMagickColor(txtLineColor.Text, MagickColors.DimGray),
+                TextColor = ParseMagickColor(txtTextColor.Text, MagickColors.DimGray),
                 TextGravity = (comboBox1.SelectedItem + "") switch
                 {
                     "左上" => Gravity.Northwest,
@@ -132,6 +201,9 @@ namespace PrintBatchMaster
 
             // 預先把 UI 狀態抓到區域變數，迴圈內就不必每張圖都 Invoke
             ProcessOptions opt = ReadUiOptions();
+
+            // 線寬單位是 mm，每個 DPI 第一次出現時 log 一次「實際輸出 px、實際 mm、誤差」
+            _loggedDpis.Clear();
 
             object lockObj = new object();
             // 使用計數器來生成流水號
@@ -253,33 +325,85 @@ namespace PrintBatchMaster
                 } // img 立刻釋放，後續繪製只剩 canvas 在記憶體
 
                 // === 繪製定位線與外框 ===
+                // 設計：改用 Fill 矩形（不用 Stroke）繪製，確保檔案上是「實際整數像素的實線」。
+                // 為什麼不用 Stroke：
+                //   1. Stroke 以路徑為中心，亞像素 stroke 會被 anti-alias 淡化（印刷會變成淡灰色而非黑色）
+                //   2. Stroke < 1 時 ImageMagick 會用 alpha 模擬，印刷不會出現淡色像素，會直接遺失
+                //   3. Stroke 落在畫布邊緣會被裁切
+                // 改用 Fill 矩形：寬度精確等於 N 個像素，邊緣不淡化，貼齊畫布也不會裁。
                 var draw = new Drawables();
 
+                int W = (int)canvas.Width;
+                int H = (int)canvas.Height;
+
+                // 線寬：使用者輸入單位是 px（直接的像素數），round 到整數最小 1。
+                // 1 px = 最細的單像素線，無論 DPI 高低視覺上都是最細的可見線。
+                // 例：使用者填 0.1 ~ 0.5 都會 round 到 1px；填 1 是 1px；填 2.5 round 到 3px。
+                int strokePx = Math.Max(1, (int)Math.Round(opt.LineWidth));
+                int leftHalf = strokePx / 2;        // 線中心左/上半（floor）
+                int rightHalf = strokePx - leftHalf; // 線中心右/下半（ceil），保持總寬 = strokePx
+
+                // 每個 DPI 第一次出現時 log 一次：顯示像素線在該 DPI 下印出的物理尺寸
+                int dpiKey = (int)Math.Round(dpiX);
+                bool firstSeenDpi;
+                lock (_loggedDpis) { firstSeenDpi = _loggedDpis.Add(dpiKey); }
+                if (firstSeenDpi)
+                {
+                    double actualMm = strokePx * 25.4 / dpiX;
+                    Log($"[線寬] 設定 {strokePx}px，{dpiKey} DPI 圖印出物理寬度 ≈ {actualMm:0.000}mm");
+                }
+
                 // 定位線水平位置：以「原始圖」的左/中/右為基準（不含 padding 邊框）
-                // - 靠左：原圖左邊緣，x = pL
-                // - 置中：原圖正中央，x = pL + imgW / 2
-                // - 靠右：原圖右邊緣，x = pL + imgW
                 int cx = opt.LinePos switch
                 {
                     LineHAlign.Left => pL,
                     LineHAlign.Right => pL + imgW,
                     _ => pL + imgW / 2
                 };
+                // margin = 外框與畫布邊緣的內縮距離（mm）。
+                // 目前 UI 沒有對應控制項，所以固定 0；保留此變數讓未來易於擴充
+                // （想加「外框內縮 X mm」時，把 MmToPx 的第一個參數改成 opt.MarginMm 即可）
                 int margin = MmToPx(0, dpiX);
                 int gap = MmToPx(opt.SafeGapMm, dpiY);
 
-                draw.StrokeColor(opt.LineColor).StrokeWidth(opt.LineWidth);
+                // === 改用 Composite 貼純色矩形畫線 ===
+                // 為什麼不用 Drawables.Rectangle：
+                //   ImageMagick 的 path-based Rectangle 在邊界 anti-alias 行為不對稱
+                //   （左上邊 0 起算 vs 右下邊貼到 W/H 邊緣）→ 左上會比右下視覺上厚一點。
+                // 改用 new MagickImage(顏色, w, h) + canvas.Composite() 直接貼純色塊：
+                //   每塊都是精確 N×M 整數像素的純色，沒有 path/anti-alias/stroke，四邊絕對對稱。
 
-                int tEnd = pT - gap;
-                if (tEnd > margin) draw.Line(cx, margin, cx, tEnd);
+                // 把外框內縮邊距移到區塊外圍變數
+                int boxLeft = margin;
+                int boxTop = margin;
+                int boxW = W - 2 * margin;
+                int boxH = H - 2 * margin;
 
-                int bStart = pT + imgH + gap;
-                int bEnd = (int)canvas.Height - margin;
-                if (bEnd > bStart) draw.Line(cx, bStart, cx, bEnd);
+                // === 外框：上下左右四條純色矩形 ===
+                // 上邊 (boxLeft, boxTop) 貼一塊 boxW × strokePx
+                PasteSolidRect(canvas, opt.LineColor, boxLeft, boxTop, boxW, strokePx);
+                // 下邊 (boxLeft, boxTop + boxH - strokePx) 貼一塊 boxW × strokePx
+                PasteSolidRect(canvas, opt.LineColor, boxLeft, boxTop + boxH - strokePx, boxW, strokePx);
+                // 左邊 (boxLeft, boxTop) 貼一塊 strokePx × boxH
+                PasteSolidRect(canvas, opt.LineColor, boxLeft, boxTop, strokePx, boxH);
+                // 右邊 (boxLeft + boxW - strokePx, boxTop) 貼一塊 strokePx × boxH
+                PasteSolidRect(canvas, opt.LineColor, boxLeft + boxW - strokePx, boxTop, strokePx, boxH);
 
-                draw.StrokeWidth(opt.LineWidth)
-                    .FillColor(MagickColors.Transparent)
-                    .Rectangle((double)margin, (double)margin, (double)((int)canvas.Width - margin), (double)((int)canvas.Height - margin));
+                // === 上方定位線（從 margin 到 pT - gap，水平中心對齊 cx）===
+                int tLineEnd = pT - gap;
+                int tLineHeight = tLineEnd - margin;
+                if (tLineHeight > 0)
+                {
+                    PasteSolidRect(canvas, opt.LineColor, cx - leftHalf, margin, strokePx, tLineHeight);
+                }
+
+                // === 下方定位線（從 pT + imgH + gap 到 H - margin）===
+                int bLineStart = pT + imgH + gap;
+                int bLineHeight = (H - margin) - bLineStart;
+                if (bLineHeight > 0)
+                {
+                    PasteSolidRect(canvas, opt.LineColor, cx - leftHalf, bLineStart, strokePx, bLineHeight);
+                }
 
                 if (opt.AddText)
                 {
@@ -372,7 +496,8 @@ namespace PrintBatchMaster
 
         private void SaveConfig()
         {
-            var s = new { S = txtSourceDir.Text, O = txtOutputDir.Text, T = numPadTop.Value, B = numPadBottom.Value, L = numPadLeft.Value, R = numPadRight.Value, X = numTextX.Value, Y = numTextY.Value, W = rdoWhite.Checked, Bl = rdoBlack.Checked, TW = rdotxtWhite.Checked, TBl = rdotxtBlack.Checked, FS = numFontSize.Value, Gap = numSafeGap.Value, LW= numLineWidth.Value, LP = cmbLinePos.SelectedIndex, TP = comboBox1.SelectedIndex, AT = chkAddText.Checked };
+            // 新版直接存色碼字串：LC=Line Color, TC=Text Color
+            var s = new { S = txtSourceDir.Text, O = txtOutputDir.Text, T = numPadTop.Value, B = numPadBottom.Value, L = numPadLeft.Value, R = numPadRight.Value, X = numTextX.Value, Y = numTextY.Value, LC = txtLineColor.Text, TC = txtTextColor.Text, FS = numFontSize.Value, Gap = numSafeGap.Value, LW= numLineWidth.Value, LP = cmbLinePos.SelectedIndex, TP = comboBox1.SelectedIndex, AT = chkAddText.Checked };
             File.WriteAllText(configPath, JsonSerializer.Serialize(s));
         }
 
@@ -429,12 +554,25 @@ namespace PrintBatchMaster
                     SetNumericValue(numFontSize, "FS", r, 12m); // 預設 12pt
                     SetNumericValue(numSafeGap, "Gap", r, 2m); // 預設 2mm
 
-                    // 3. 狀態載入
-                    rdoWhite.Checked = r.TryGetProperty("W", out var w) && w.GetBoolean();
-                    rdoBlack.Checked = r.TryGetProperty("Bl", out var bl) && bl.GetBoolean();
-
-                    rdotxtWhite.Checked = r.TryGetProperty("TW", out var tw) && tw.GetBoolean();
-                    rdotxtBlack.Checked = r.TryGetProperty("TBl", out var tbl) && tbl.GetBoolean();
+                    // 3. 顏色載入：優先讀新版 LC/TC 色碼字串；
+                    //    若沒有就 fallback 到舊版 W/Bl/TW/TBl 三選一狀態（向後相容舊設定檔）
+                    string lineHex = r.TryGetProperty("LC", out var lc) ? (lc.GetString() ?? "") : "";
+                    string textHex = r.TryGetProperty("TC", out var tc) ? (tc.GetString() ?? "") : "";
+                    if (string.IsNullOrWhiteSpace(lineHex))
+                    {
+                        bool oldWhite = r.TryGetProperty("W", out var w) && w.GetBoolean();
+                        bool oldBlack = r.TryGetProperty("Bl", out var bl) && bl.GetBoolean();
+                        lineHex = oldWhite ? "#FFFFFF" : oldBlack ? "#000000" : "#696969";
+                    }
+                    if (string.IsNullOrWhiteSpace(textHex))
+                    {
+                        bool oldTW = r.TryGetProperty("TW", out var tw) && tw.GetBoolean();
+                        bool oldTBl = r.TryGetProperty("TBl", out var tbl) && tbl.GetBoolean();
+                        textHex = oldTW ? "#FFFFFF" : oldTBl ? "#000000" : "#696969";
+                    }
+                    txtLineColor.Text = lineHex;
+                    txtTextColor.Text = textHex;
+                    // TextChanged 事件會自動刷新 pnlLineColor / pnlTextColor 的 BackColor
 
                     // 4. 定位線水平位置
                     if (r.TryGetProperty("LP", out var lp) && lp.TryGetInt32(out int lpIdx)

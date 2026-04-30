@@ -44,12 +44,12 @@
             numLineWidth = new NumericUpDown();
             grpColor = new GroupBox();
             grptxtColor = new GroupBox();
-            rdoWhite = new RadioButton();
-            rdoGray = new RadioButton();
-            rdoBlack = new RadioButton();
-            rdotxtWhite = new RadioButton();
-            rdotxtGray = new RadioButton();
-            rdotxtBlack = new RadioButton();
+            txtLineColor = new TextBox();
+            btnPickLineColor = new Button();
+            pnlLineColor = new Panel();
+            txtTextColor = new TextBox();
+            btnPickTextColor = new Button();
+            pnlTextColor = new Panel();
             btnStart = new Button();
             progressBar1 = new ProgressBar();
             txtLog = new RichTextBox();
@@ -133,7 +133,7 @@
             grpPadding.Size = new Size(350, 185);
             grpPadding.TabIndex = 6;
             grpPadding.TabStop = false;
-            grpPadding.Text = "印刷邊距與標記 (mm / pt)";
+            grpPadding.Text = "印刷邊距與標記 (邊距/距離=mm，字級=pt，線寬=px)";
             //
             // lblLinePos
             //
@@ -228,7 +228,7 @@
             lblLW.Name = "lblLW";
             lblLW.Size = new Size(35, 23);
             lblLW.TabIndex = 7;
-            lblLW.Text = "線寬";
+            lblLW.Text = "線寬px";
             // 
             // lblL
             // 
@@ -315,90 +315,94 @@
             // 
             // numLineWidth
             // 
-            numLineWidth.DecimalPlaces = 1;
+            numLineWidth.DecimalPlaces = 0;
             numLineWidth.Location = new Point(150, 90);
             numLineWidth.Name = "numLineWidth";
             numLineWidth.Size = new Size(60, 23);
             numLineWidth.TabIndex = 17;
-            // 
-            // grpColor
-            // 
+
+            numLineWidth.Minimum = 1M; // 最小線寬
+            numLineWidth.Maximum = 10.0M; // 最大線寬
+            numLineWidth.Increment = 1M; // 每次點擊上下箭頭增減的數值
+            numLineWidth.Value = 1.0M;    // 預設值
+            //
+            // grpColor (標記顏色)
+            //
             grpColor.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            grpColor.Controls.Add(rdoWhite);
-            grpColor.Controls.Add(rdoGray);
-            grpColor.Controls.Add(rdoBlack);
+            grpColor.Controls.Add(txtLineColor);
+            grpColor.Controls.Add(btnPickLineColor);
+            grpColor.Controls.Add(pnlLineColor);
             grpColor.Location = new Point(380, 100);
             grpColor.Name = "grpColor";
             grpColor.Size = new Size(100, 150);
             grpColor.TabIndex = 5;
             grpColor.TabStop = false;
             grpColor.Text = "標記顏色";
-            // 
-            // grptxtColor
-            // 
+            //
+            // txtLineColor
+            //
+            txtLineColor.Location = new Point(10, 30);
+            txtLineColor.Name = "txtLineColor";
+            txtLineColor.Size = new Size(80, 23);
+            txtLineColor.TabIndex = 0;
+            txtLineColor.Text = "#696969";
+            //
+            // btnPickLineColor
+            //
+            btnPickLineColor.Location = new Point(10, 60);
+            btnPickLineColor.Name = "btnPickLineColor";
+            btnPickLineColor.Size = new Size(80, 25);
+            btnPickLineColor.TabIndex = 1;
+            btnPickLineColor.Text = "選色...";
+            btnPickLineColor.UseVisualStyleBackColor = true;
+            //
+            // pnlLineColor
+            //
+            pnlLineColor.BorderStyle = BorderStyle.FixedSingle;
+            pnlLineColor.BackColor = Color.DimGray;
+            pnlLineColor.Location = new Point(10, 95);
+            pnlLineColor.Name = "pnlLineColor";
+            pnlLineColor.Size = new Size(80, 40);
+            pnlLineColor.TabIndex = 2;
+            //
+            // grptxtColor (文字顏色)
+            //
             grptxtColor.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            grptxtColor.Controls.Add(rdotxtWhite);
-            grptxtColor.Controls.Add(rdotxtGray);
-            grptxtColor.Controls.Add(rdotxtBlack);
+            grptxtColor.Controls.Add(txtTextColor);
+            grptxtColor.Controls.Add(btnPickTextColor);
+            grptxtColor.Controls.Add(pnlTextColor);
             grptxtColor.Location = new Point(480, 100);
-            grptxtColor.Name = "grpColor";
+            grptxtColor.Name = "grptxtColor";
             grptxtColor.Size = new Size(100, 150);
             grptxtColor.TabIndex = 5;
             grptxtColor.TabStop = false;
             grptxtColor.Text = "文字顏色";
-            // 
-            // rdoWhite
-            // 
-            rdoWhite.Location = new Point(20, 105);
-            rdoWhite.Name = "rdoWhite";
-            rdoWhite.Size = new Size(54, 24);
-            rdoWhite.TabIndex = 0;
-            rdoWhite.Text = "白色";
-            // 
-            // rdoGray
-            // 
-            rdoGray.Checked = true;
-            rdoGray.Location = new Point(20, 35);
-            rdoGray.Name = "rdoGray";
-            rdoGray.Size = new Size(54, 24);
-            rdoGray.TabIndex = 1;
-            rdoGray.TabStop = true;
-            rdoGray.Text = "灰色";
-            // 
-            // rdoBlack
-            // 
-            rdoBlack.Location = new Point(20, 70);
-            rdoBlack.Name = "rdoBlack";
-            rdoBlack.Size = new Size(54, 24);
-            rdoBlack.TabIndex = 2;
-            rdoBlack.Text = "黑色";
-
-            // 
-            // rdotxtWhite
-            // 
-            rdotxtWhite.Location = new Point(20, 105);
-            rdotxtWhite.Name = "rdoWhite";
-            rdotxtWhite.Size = new Size(54, 24);
-            rdotxtWhite.TabIndex = 0;
-            rdotxtWhite.Text = "白色";
-            // 
-            // rdotxtGray
-            // 
-            rdotxtGray.Checked = true;
-            rdotxtGray.Location = new Point(20, 35);
-            rdotxtGray.Name = "rdoGray";
-            rdotxtGray.Size = new Size(54, 24);
-            rdotxtGray.TabIndex = 1;
-            rdotxtGray.TabStop = true;
-            rdotxtGray.Text = "灰色";
-            // 
-            // rdotxtBlack
-            // 
-            rdotxtBlack.Location = new Point(20, 70);
-            rdotxtBlack.Name = "rdoBlack";
-            rdotxtBlack.Size = new Size(54, 24);
-            rdotxtBlack.TabIndex = 2;
-            rdotxtBlack.Text = "黑色";
+            //
+            // txtTextColor
+            //
+            txtTextColor.Location = new Point(10, 30);
+            txtTextColor.Name = "txtTextColor";
+            txtTextColor.Size = new Size(80, 23);
+            txtTextColor.TabIndex = 0;
+            txtTextColor.Text = "#696969";
+            //
+            // btnPickTextColor
+            //
+            btnPickTextColor.Location = new Point(10, 60);
+            btnPickTextColor.Name = "btnPickTextColor";
+            btnPickTextColor.Size = new Size(80, 25);
+            btnPickTextColor.TabIndex = 1;
+            btnPickTextColor.Text = "選色...";
+            btnPickTextColor.UseVisualStyleBackColor = true;
+            //
+            // pnlTextColor
+            //
+            pnlTextColor.BorderStyle = BorderStyle.FixedSingle;
+            pnlTextColor.BackColor = Color.DimGray;
+            pnlTextColor.Location = new Point(10, 95);
+            pnlTextColor.Name = "pnlTextColor";
+            pnlTextColor.Size = new Size(80, 40);
+            pnlTextColor.TabIndex = 2;
             // 
             // btnStart
             // 
@@ -492,8 +496,12 @@
         private System.Windows.Forms.NumericUpDown numPadTop, numPadBottom, numPadLeft, numPadRight, numLineWidth, numTextX, numTextY, numFontSize, numSafeGap;
         private System.Windows.Forms.GroupBox grpColor;
         private System.Windows.Forms.GroupBox grptxtColor;
-        private System.Windows.Forms.RadioButton rdoWhite, rdoGray, rdoBlack;
-        private System.Windows.Forms.RadioButton rdotxtWhite, rdotxtGray, rdotxtBlack;
+        private System.Windows.Forms.TextBox txtLineColor;
+        private System.Windows.Forms.Button btnPickLineColor;
+        private System.Windows.Forms.Panel pnlLineColor;
+        private System.Windows.Forms.TextBox txtTextColor;
+        private System.Windows.Forms.Button btnPickTextColor;
+        private System.Windows.Forms.Panel pnlTextColor;
         private System.Windows.Forms.Button btnStart;
         private System.Windows.Forms.ProgressBar progressBar1;
         private System.Windows.Forms.RichTextBox txtLog;
