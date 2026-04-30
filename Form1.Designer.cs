@@ -19,6 +19,8 @@
             txtOutputDir = new TextBox();
             btnBrowseOutput = new Button();
             grpPadding = new GroupBox();
+            lblLinePos = new Label();
+            cmbLinePos = new ComboBox();
             label1 = new Label();
             comboBox1 = new ComboBox();
             lblGap = new Label();
@@ -103,6 +105,8 @@
             // 
             // grpPadding
             // 
+            grpPadding.Controls.Add(lblLinePos);
+            grpPadding.Controls.Add(cmbLinePos);
             grpPadding.Controls.Add(label1);
             grpPadding.Controls.Add(comboBox1);
             grpPadding.Controls.Add(lblGap);
@@ -126,10 +130,26 @@
             grpPadding.Controls.Add(numLineWidth);
             grpPadding.Location = new Point(20, 100);
             grpPadding.Name = "grpPadding";
-            grpPadding.Size = new Size(350, 150);
+            grpPadding.Size = new Size(350, 185);
             grpPadding.TabIndex = 6;
             grpPadding.TabStop = false;
             grpPadding.Text = "印刷邊距與標記 (mm / pt)";
+            //
+            // lblLinePos
+            //
+            lblLinePos.Location = new Point(10, 152);
+            lblLinePos.Name = "lblLinePos";
+            lblLinePos.Size = new Size(95, 23);
+            lblLinePos.TabIndex = 21;
+            lblLinePos.Text = "定位線水平位置";
+            //
+            // cmbLinePos
+            //
+            cmbLinePos.FormattingEnabled = true;
+            cmbLinePos.Location = new Point(115, 149);
+            cmbLinePos.Name = "cmbLinePos";
+            cmbLinePos.Size = new Size(95, 23);
+            cmbLinePos.TabIndex = 22;
             // 
             // label1
             // 
@@ -384,7 +404,7 @@
             // 
             btnStart.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             btnStart.BackColor = Color.LightSteelBlue;
-            btnStart.Location = new Point(20, 260);
+            btnStart.Location = new Point(20, 295);
             btnStart.Name = "btnStart";
             btnStart.Size = new Size(565, 40);
             btnStart.TabIndex = 4;
@@ -394,7 +414,7 @@
             // progressBar1
             // 
             progressBar1.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-            progressBar1.Location = new Point(20, 310);
+            progressBar1.Location = new Point(20, 345);
             progressBar1.Name = "progressBar1";
             progressBar1.Size = new Size(565, 23);
             progressBar1.TabIndex = 3;
@@ -404,7 +424,7 @@
             txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             txtLog.BackColor = Color.Black;
             txtLog.ForeColor = Color.Lime;
-            txtLog.Location = new Point(20, 345);
+            txtLog.Location = new Point(20, 380);
             txtLog.Name = "txtLog";
             txtLog.Size = new Size(565, 90);
             txtLog.TabIndex = 2;
@@ -428,7 +448,7 @@
             // 
             // Form1
             // 
-            ClientSize = new Size(610, 455);
+            ClientSize = new Size(610, 490);
             Controls.Add(lblO);
             Controls.Add(lblS);
             Controls.Add(txtLog);
@@ -441,7 +461,7 @@
             Controls.Add(txtOutputDir);
             Controls.Add(btnBrowseSource);
             Controls.Add(txtSourceDir);
-            MinimumSize = new Size(620, 480);
+            MinimumSize = new Size(620, 515);
             Name = "Form1";
             Text = "創衣 PrintFlow AutoMarker - 完整版";
             grpPadding.ResumeLayout(false);
@@ -481,5 +501,7 @@
         private System.Windows.Forms.CheckBox chkAddText;
         private ComboBox comboBox1;
         private Label label1;
+        private Label lblLinePos;
+        private ComboBox cmbLinePos;
     }
 }
