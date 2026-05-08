@@ -325,13 +325,14 @@ namespace PrintBatchMaster
                 } // img 立刻釋放，後續繪製只剩 canvas 在記憶體
 
                 // === 繪製定位線與外框 ===
-                // 設計：改用 Fill 矩形（不用 Stroke）繪製，確保檔案上是「實際整數像素的實線」。
-                // 為什麼不用 Stroke：
-                //   1. Stroke 以路徑為中心，亞像素 stroke 會被 anti-alias 淡化（印刷會變成淡灰色而非黑色）
-                //   2. Stroke < 1 時 ImageMagick 會用 alpha 模擬，印刷不會出現淡色像素，會直接遺失
-                //   3. Stroke 落在畫布邊緣會被裁切
-                // 改用 Fill 矩形：寬度精確等於 N 個像素，邊緣不淡化，貼齊畫布也不會裁。
-                var draw = new Drawables();
+                // 設計：完全繞過 ImageMagick 的 Drawables（path/stroke/fill 系統），
+                // 改用 Composite 把「純色 N×M 像素塊」直接貼到 canvas 上。
+                // 為什麼這樣才對稱：
+                //   1. Drawables 的 stroke 會 anti-alias，亞像素 stroke 在印刷上會變淡或消失。
+                //   2. 即使用 fill rectangle，path-based 渲染對「邊界 0 起算」vs「貼到 W/H」處理不對稱，
+                //      左上會多 1 像素的淡邊，視覺上比右下厚。
+                //   3. Composite 是整塊像素覆蓋，沒有 path、沒有 anti-alias、沒有 stroke。
+                //      四邊都是「精確 N×M 整數像素的純色」，絕對對稱。
 
                 int W = (int)canvas.Width;
                 int H = (int)canvas.Height;
@@ -366,38 +367,50 @@ namespace PrintBatchMaster
                 int margin = MmToPx(0, dpiX);
                 int gap = MmToPx(opt.SafeGapMm, dpiY);
 
-                // 線條顏色用 fill 不用 stroke
-                draw.StrokeColor(MagickColors.Transparent)
-                    .StrokeWidth(0)
-                    .FillColor(opt.LineColor);
+                // === 改用 Composite 貼純色矩形畫線 ===
+                // 為什麼不用 Drawables.Rectangle：
+                //   ImageMagick 的 path-based Rectangle 在邊界 anti-alias 行為不對稱
+                //   （左上邊 0 起算 vs 右下邊貼到 W/H 邊緣）→ 左上會比右下視覺上厚一點。
+                // 改用 new MagickImage(顏色, w, h) + canvas.Composite() 直接貼純色塊：
+                //   每塊都是精確 N×M 整數像素的純色，沒有 path/anti-alias/stroke，四邊絕對對稱。
 
-                // === 上方定位線（垂直細矩形，從畫布頂端 margin 到原圖上邊緣往上 gap）===
+                // 把外框內縮邊距移到區塊外圍變數
+                int boxLeft = margin;
+                int boxTop = margin;
+                int boxW = W - 2 * margin;
+                int boxH = H - 2 * margin;
+
+                // === 外框：上下左右四條純色矩形 ===
+                // 上邊 (boxLeft, boxTop) 貼一塊 boxW × strokePx
+                PasteSolidRect(canvas, opt.LineColor, boxLeft, boxTop, boxW, strokePx);
+                // 下邊 (boxLeft, boxTop + boxH - strokePx) 貼一塊 boxW × strokePx
+                PasteSolidRect(canvas, opt.LineColor, boxLeft, boxTop + boxH - strokePx, boxW, strokePx);
+                // 左邊 (boxLeft, boxTop) 貼一塊 strokePx × boxH
+                PasteSolidRect(canvas, opt.LineColor, boxLeft, boxTop, strokePx, boxH);
+                // 右邊 (boxLeft + boxW - strokePx, boxTop) 貼一塊 strokePx × boxH
+                PasteSolidRect(canvas, opt.LineColor, boxLeft + boxW - strokePx, boxTop, strokePx, boxH);
+
+                // === 上方定位線（從 margin 到 pT - gap，水平中心對齊 cx）===
                 int tLineEnd = pT - gap;
-                if (tLineEnd > margin)
+                int tLineHeight = tLineEnd - margin;
+                if (tLineHeight > 0)
                 {
-                    draw.Rectangle(cx - leftHalf, margin, cx + rightHalf, tLineEnd);
+                    PasteSolidRect(canvas, opt.LineColor, cx - leftHalf, margin, strokePx, tLineHeight);
                 }
 
-                // === 下方定位線（垂直細矩形，從原圖下邊緣往下 gap 到畫布底端 H - margin）===
+                // === 下方定位線（從 pT + imgH + gap 到 H - margin）===
                 int bLineStart = pT + imgH + gap;
-                int bLineEnd = H - margin;
-                if (bLineEnd > bLineStart)
+                int bLineHeight = (H - margin) - bLineStart;
+                if (bLineHeight > 0)
                 {
-                    draw.Rectangle(cx - leftHalf, bLineStart, cx + rightHalf, bLineEnd);
+                    PasteSolidRect(canvas, opt.LineColor, cx - leftHalf, bLineStart, strokePx, bLineHeight);
                 }
-
-                // === 外框：上下左右四條 fill 矩形，依 margin 內縮後緊貼 ===
-                // 上邊
-                draw.Rectangle(margin, margin, W - margin, margin + strokePx);
-                // 下邊
-                draw.Rectangle(margin, H - margin - strokePx, W - margin, H - margin);
-                // 左邊
-                draw.Rectangle(margin, margin, margin + strokePx, H - margin);
-                // 右邊
-                draw.Rectangle(W - margin - strokePx, margin, W - margin, H - margin);
 
                 if (opt.AddText)
                 {
+                    // Drawables 只在繪製文字時才需要建立（外框與定位線已改用 Composite）
+                    var draw = new Drawables();
+
                     // 字型：優先用內附超極細黑體；先複製到純英文 Temp 路徑避免中文路徑造成 Magick 失敗
                     string safeTempPath = Path.Combine(Path.GetTempPath(), "Chogokuboso Gothic.ttf");
                     string localFontPath = Path.Combine(Application.StartupPath, "Fonts", "Chogokuboso Gothic.ttf");
@@ -432,13 +445,39 @@ namespace PrintBatchMaster
                         .Text(margin + MmToPx(opt.TextXMm, dpiX),
                               margin + MmToPx(opt.TextYMm, dpiY),
                               newText);
-                }
 
-                canvas.Draw(draw);
+                    canvas.Draw(draw);
+                }
 
                 // 存檔前強制設定密度與壓縮
                 canvas.Settings.Compression = CompressionMethod.LZW;
                 canvas.Write(output);
+            }
+        }
+
+        /// <summary>
+        /// 在 canvas 上 (x, y) 位置貼一塊 width × height 的純色矩形。
+        /// 用 Composite 取代 Drawables.Rectangle，避免 path/anti-alias 在邊界導致左上比右下厚的不對稱問題。
+        /// 自動 clamp 邊界、忽略尺寸 ≤ 0 的呼叫。
+        /// </summary>
+        private void PasteSolidRect(MagickImage canvas, MagickColor color, int x, int y, int width, int height)
+        {
+            if (width <= 0 || height <= 0) return;
+
+            int cw = (int)canvas.Width;
+            int ch = (int)canvas.Height;
+
+            // clamp 座標與尺寸到 canvas 範圍內，避免 Composite 失敗或溢出
+            if (x < 0) { width += x; x = 0; }
+            if (y < 0) { height += y; y = 0; }
+            if (x + width > cw) width = cw - x;
+            if (y + height > ch) height = ch - y;
+
+            if (width <= 0 || height <= 0) return;
+
+            using (var rect = new MagickImage(color, (uint)width, (uint)height))
+            {
+                canvas.Composite(rect, x, y, CompositeOperator.Over);
             }
         }
 
