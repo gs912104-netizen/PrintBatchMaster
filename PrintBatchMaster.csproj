@@ -25,10 +25,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="SourceHanSansSC-ExtraLight-2.otf">
+    <None Update="SourceHanSansSC-ExtraLight.otf">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Update="Fonts\超極細ゴシックChogokuboso Gothic.ttf">
+    <None Update="Fonts\Chogokuboso Gothic.ttf">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>

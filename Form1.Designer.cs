@@ -21,6 +21,8 @@
             grpPadding = new GroupBox();
             lblLinePos = new Label();
             cmbLinePos = new ComboBox();
+            lblTextOffset = new Label();
+            numTextOffset = new NumericUpDown();
             label1 = new Label();
             comboBox1 = new ComboBox();
             lblGap = new Label();
@@ -65,6 +67,7 @@
             ((System.ComponentModel.ISupportInitialize)numPadBottom).BeginInit();
             ((System.ComponentModel.ISupportInitialize)numPadTop).BeginInit();
             ((System.ComponentModel.ISupportInitialize)numLineWidth).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)numTextOffset).BeginInit();
             grpColor.SuspendLayout();
             grptxtColor.SuspendLayout();
             SuspendLayout();
@@ -107,6 +110,8 @@
             // 
             grpPadding.Controls.Add(lblLinePos);
             grpPadding.Controls.Add(cmbLinePos);
+            grpPadding.Controls.Add(lblTextOffset);
+            grpPadding.Controls.Add(numTextOffset);
             grpPadding.Controls.Add(label1);
             grpPadding.Controls.Add(comboBox1);
             grpPadding.Controls.Add(lblGap);
@@ -150,6 +155,25 @@
             cmbLinePos.Name = "cmbLinePos";
             cmbLinePos.Size = new Size(95, 23);
             cmbLinePos.TabIndex = 22;
+            //
+            // lblTextOffset
+            //
+            lblTextOffset.Location = new Point(220, 152);
+            lblTextOffset.Name = "lblTextOffset";
+            lblTextOffset.Size = new Size(35, 23);
+            lblTextOffset.TabIndex = 23;
+            lblTextOffset.Text = "下推";
+            //
+            // numTextOffset
+            //
+            numTextOffset.DecimalPlaces = 1;
+            numTextOffset.Location = new Point(260, 149);
+            numTextOffset.Maximum = new decimal(new int[] { 500, 0, 0, 0 });
+            // 允許負值：讓使用者可以把文字往上推（例如貼到外框內或微調貼齊）
+            numTextOffset.Minimum = new decimal(new int[] { 50, 0, 0, int.MinValue });
+            numTextOffset.Name = "numTextOffset";
+            numTextOffset.Size = new Size(75, 23);
+            numTextOffset.TabIndex = 24;
             // 
             // label1
             // 
@@ -157,7 +181,7 @@
             label1.Name = "label1";
             label1.Size = new Size(81, 23);
             label1.TabIndex = 20;
-            label1.Text = "文字起始位置";
+            label1.Text = "文字水平對齊";
             // 
             // comboBox1
             // 
@@ -479,6 +503,7 @@
             ((System.ComponentModel.ISupportInitialize)numPadBottom).EndInit();
             ((System.ComponentModel.ISupportInitialize)numPadTop).EndInit();
             ((System.ComponentModel.ISupportInitialize)numLineWidth).EndInit();
+            ((System.ComponentModel.ISupportInitialize)numTextOffset).EndInit();
             grpColor.ResumeLayout(false);
             grptxtColor.ResumeLayout(false);
             ResumeLayout(false);
@@ -511,5 +536,7 @@
         private Label label1;
         private Label lblLinePos;
         private ComboBox cmbLinePos;
+        private Label lblTextOffset;
+        private NumericUpDown numTextOffset;
     }
 }

@@ -36,8 +36,13 @@ namespace PrintBatchMaster
             public bool AddText;
             public MagickColor LineColor = MagickColors.DimGray;
             public MagickColor TextColor = MagickColors.DimGray;
-            public Gravity TextGravity = Gravity.Southwest;
+            // 文字水平對齊（在外框下方延伸區內）：靠左 / 置中 / 靠右
+            public LineHAlign TextAlign = LineHAlign.Left;
+            // 文字下推距離（mm）：從圖片區底部往下推多少 mm 才放文字
+            public double TextOffsetMm;
             public LineHAlign LinePos = LineHAlign.Center;
+            // 批次開始時預先準備好的內附字型路徑（複製到 Temp 純英文路徑後）；不加字時為 null
+            public string? FontPath;
         }
 
         public Form1()
@@ -45,12 +50,10 @@ namespace PrintBatchMaster
             InitializeComponent();
             BindEvents();
             this.Load += (s, e) => LoadConfig();
-            comboBox1.Items.Add("左下");
-            comboBox1.Items.Add("左上");
-            comboBox1.Items.Add("中下");
-            comboBox1.Items.Add("中上");
-            comboBox1.Items.Add("右下");
-            comboBox1.Items.Add("右上");
+            // 文字水平對齊（文字會被放在外框下方延伸區，永遠在框外）
+            comboBox1.Items.Add("靠左");
+            comboBox1.Items.Add("置中");
+            comboBox1.Items.Add("靠右");
             comboBox1.SelectedIndex = 0;
 
             // 定位線水平位置（相對於「原始圖」的左/中/右，不含 padding）
@@ -162,16 +165,14 @@ namespace PrintBatchMaster
                 AddText = chkAddText.Checked,
                 LineColor = ParseMagickColor(txtLineColor.Text, MagickColors.DimGray),
                 TextColor = ParseMagickColor(txtTextColor.Text, MagickColors.DimGray),
-                TextGravity = (comboBox1.SelectedItem + "") switch
+                TextAlign = (comboBox1.SelectedItem + "") switch
                 {
-                    "左上" => Gravity.Northwest,
-                    "中上" => Gravity.North,
-                    "右上" => Gravity.Northeast,
-                    "左下" => Gravity.Southwest,
-                    "中下" => Gravity.South,
-                    "右下" => Gravity.Southeast,
-                    _ => Gravity.Southwest
+                    "靠左" => LineHAlign.Left,
+                    "置中" => LineHAlign.Center,
+                    "靠右" => LineHAlign.Right,
+                    _ => LineHAlign.Left
                 },
+                TextOffsetMm = (double)numTextOffset.Value,
                 LinePos = (cmbLinePos.SelectedItem + "") switch
                 {
                     "靠左" => LineHAlign.Left,
@@ -201,6 +202,22 @@ namespace PrintBatchMaster
 
             // 預先把 UI 狀態抓到區域變數，迴圈內就不必每張圖都 Invoke
             ProcessOptions opt = ReadUiOptions();
+
+            // 強制用內附字型：批次開始前先檢查並複製一次，找不到就整批中止（避免每張圖都失敗）
+            if (opt.AddText)
+            {
+                try
+                {
+                    opt.FontPath = EnsureBundledFont("Chogokuboso Gothic.ttf");
+                }
+                catch (FileNotFoundException ex)
+                {
+                    Log($"[FATAL] {ex.Message}");
+                    MessageBox.Show(ex.Message, "字型錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    btnStart.Enabled = true;
+                    return;
+                }
+            }
 
             // 線寬單位是 mm，每個 DPI 第一次出現時 log 一次「實際輸出 px、實際 mm、誤差」
             _loggedDpis.Clear();
@@ -310,8 +327,48 @@ namespace PrintBatchMaster
                 }
             }
 
+            // 圖片區（含 padding）的底部 Y 座標。外框只佔此區域；文字區在這之下延伸
+            int imageBoxBottom = imgH + pT + pB;
+
+            // 文字區高度計算：使用者填的「下推 mm」+ 字級高度 + 安全裕度
+            int textOffsetPx = MmToPx(opt.TextOffsetMm, dpiY);
+            // 提早算 textOffsetX/Y（使用者額外的 X/Y 微調偏移），canvas 高度也要納入 Y 偏移
+            int textOffsetX = MmToPx(opt.TextXMm, dpiX);
+            int textOffsetY = MmToPx(opt.TextYMm, dpiY);
+
+            // 用 ImageMagick 的 FontTypeMetrics 精確查 ascent/descent，避免用粗略估算
+            // ascent = 文字基線到頂端的距離；descent = 基線到下伸字底的距離
+            double fontPxF = opt.FontSizePt / 72.0 * dpiY;
+            double ascentPx = fontPxF * 0.85;   // 預設估算（拿不到 metrics 時用）
+            double descentPx = fontPxF * 0.20;
+            if (opt.AddText && !string.IsNullOrEmpty(opt.FontPath))
+            {
+                try
+                {
+                    using (var dummy = new MagickImage(MagickColors.Transparent, 1, 1))
+                    {
+                        dummy.Settings.Font = opt.FontPath;
+                        dummy.Settings.FontPointsize = opt.FontSizePt;
+                        // 量「Mjyg」這種同時有上伸字 (M) 跟下伸字 (j/y/g) 的字串能拿到完整 ascent/descent
+                        var metrics = dummy.FontTypeMetrics("Mjyg");
+                        if (metrics != null)
+                        {
+                            ascentPx = metrics.Ascent;
+                            descentPx = Math.Abs(metrics.Descent);
+                        }
+                    }
+                }
+                catch { /* metrics 拿不到就用預設估算 */ }
+            }
+            int fontHeightPx = (int)Math.Ceiling(ascentPx + descentPx);
+            // 文字區高度 = 下推距離 + 使用者 Y 偏移 + 字級高度
+            // textOffsetY 為負時（向上偏）取 0，canvas 不縮，避免文字裁切（圖片區會被覆蓋是用戶選擇）
+            int textAreaH = opt.AddText
+                ? Math.Max(0, textOffsetPx + textOffsetY) + fontHeightPx
+                : 0;
+
             uint canvasW = (uint)(imgW + pL + pR);
-            uint canvasH = (uint)(imgH + pT + pB);
+            uint canvasH = (uint)(imageBoxBottom + textAreaH);
 
             // === 建 canvas（透明），記憶體裡只有「canvas」一份大像素緩衝 ===
             using (var canvas = new MagickImage(MagickColors.Transparent, canvasW, canvasH))
@@ -335,7 +392,9 @@ namespace PrintBatchMaster
                 //      四邊都是「精確 N×M 整數像素的純色」，絕對對稱。
 
                 int W = (int)canvas.Width;
-                int H = (int)canvas.Height;
+                // 注意：外框跟定位線只繪製在「圖片區」(高度 = imageBoxBottom)；
+                //       canvas 下半部的文字區留給文字使用，不畫外框與定位線。
+                int H = imageBoxBottom;
 
                 // 線寬：使用者輸入單位是 px（直接的像素數），round 到整數最小 1。
                 // 1 px = 最細的單像素線，無論 DPI 高低視覺上都是最細的可見線。
@@ -406,45 +465,71 @@ namespace PrintBatchMaster
                     PasteSolidRect(canvas, opt.LineColor, cx - leftHalf, bLineStart, strokePx, bLineHeight);
                 }
 
-                if (opt.AddText)
+                if (opt.AddText && !string.IsNullOrEmpty(opt.FontPath))
                 {
-                    // Drawables 只在繪製文字時才需要建立（外框與定位線已改用 Composite）
+                    // 字型路徑由 StartProcessing 開始前預先準備好（已複製到 Temp 純英文路徑）
+                    string fontPath = opt.FontPath;
+
+                    // 用同一個 fontPath 偵測字形是否存在，沒有的字改成拼音輸出避免「豆腐字」
+                    string newText = ConvertUnsupportedToPinyin(text, fontPath);
+
+                    // === 文字繪製：用絕對座標，不依賴 Drawables.Gravity ===
+                    // Magick.NET 14 的 Drawables.Gravity 對 Text(x, y) 的座標重映射在某些版本下會有問題
+                    // （文字被算到 canvas 外導致整個消失），改用絕對座標最穩。
+                    //
+                    // 步驟：
+                    //   1. 用 canvas.FontTypeMetrics 精確量出文字實際渲染的寬度（含 kerning）
+                    //   2. 依 TextAlign 算出文字左邊起點 textX
+                    //   3. baselineY = 期望文字頂端 Y + ascent
+
+                    // 量文字寬度（canvas 已有正確 density 跟字型設定）
+                    canvas.Settings.Font = fontPath;
+                    canvas.Settings.FontPointsize = opt.FontSizePt;
+                    var textMetrics = canvas.FontTypeMetrics(newText);
+                    double textWidthPx = textMetrics != null
+                        ? textMetrics.TextWidth 
+                        : (newText.Length * opt.FontSizePt * 0.6);
+
+                    // ImageMagick 的 Drawables.Text(x, y) 中 y 是 baseline。
+                    // 用 metrics.Ascent 直接補償：實際字型最高字符頂端會在 baseline - ascent 位置，
+                    // 也就是 = desiredTextTopY = imageBoxBottom + textOffsetPx + textOffsetY。
+                    // 這樣「下推 0」時，文字頂端「精確緊貼外框下方框線」（不會凸進外框內）。
+                    int desiredTextTopY = imageBoxBottom + textOffsetPx + textOffsetY;
+                    int baselineY = desiredTextTopY + (int)Math.Ceiling(ascentPx);
+
+                    // 自己算 textX：不用 Gravity，直接絕對座標
+                    int textWidthInt = (int)Math.Ceiling(textWidthPx);
+                    int textX;
+                    switch (opt.TextAlign)
+                    {
+                        case LineHAlign.Right:
+                            // 靠右：文字右邊在 (W - margin) 位置，正值 textOffsetX 代表「再向左偏」
+                            textX = W - margin - textWidthInt - textOffsetX;
+                            break;
+                        case LineHAlign.Center:
+                            // 置中：文字水平中央在 W/2，左邊在 (W - textWidth) / 2，正值 textOffsetX 向右偏
+                            textX = (W - textWidthInt) / 2 + textOffsetX;
+                            break;
+                        default: // Left
+                            // 靠左：文字左邊在 margin 位置，正值 textOffsetX 向右偏
+                            textX = margin + textOffsetX;
+                            break;
+                    }
+
+                    // 詳細 debug log，方便追位置問題
+                    int extraH = (int)canvasH - imageBoxBottom;
+                    int textTopOffsetFromFrame = textOffsetPx + textOffsetY; // 文字頂離外框底的實際距離
+                    Log($"[尺寸] 原圖+padding={canvasW}x{imageBoxBottom} → canvas={canvasW}x{canvasH} (擴+{extraH}px) | 外框底Y={imageBoxBottom}");
+                    Log($"[文字] '{newText}' 寬{textWidthInt}px | 文字頂Y={desiredTextTopY} (離外框底 +{textTopOffsetFromFrame}px) | baseline={baselineY} | ascent={ascentPx:0.0} descent={descentPx:0.0} | 起點X={textX}");
+
                     var draw = new Drawables();
-
-                    // 字型：優先用內附超極細黑體；先複製到純英文 Temp 路徑避免中文路徑造成 Magick 失敗
-                    string safeTempPath = Path.Combine(Path.GetTempPath(), "Chogokuboso Gothic.ttf");
-                    string localFontPath = Path.Combine(Application.StartupPath, "Fonts", "Chogokuboso Gothic.ttf");
-                    try
-                    {
-                        if (File.Exists(localFontPath))
-                        {
-                            File.Copy(localFontPath, safeTempPath, true);
-                            localFontPath = safeTempPath;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Log($"[Font] 複製字型失敗：{ex.Message}");
-                    }
-                    string fontPath = File.Exists(localFontPath) ? localFontPath : "C:\\Windows\\Fonts\\msjhl.ttc";
-                    if (!File.Exists(fontPath))
-                    {
-                        fontPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "msjh.ttc");
-                    }
-
-                    // 用 SixLabors.Fonts 偵測字形是否存在，沒有的字改成拼音輸出避免「豆腐字」
-                    string newText = ConvertUnsupportedToPinyin(text, localFontPath);
-
                     draw.Font(fontPath)
                         .FontPointSize(opt.FontSizePt)
                         .FillColor(opt.TextColor)
                         .StrokeColor(MagickColors.Transparent)
                         .StrokeWidth(0)
                         .TextEncoding(System.Text.Encoding.UTF8)
-                        .Gravity(opt.TextGravity)
-                        .Text(margin + MmToPx(opt.TextXMm, dpiX),
-                              margin + MmToPx(opt.TextYMm, dpiY),
-                              newText);
+                        .Text(textX, baselineY, newText);
 
                     canvas.Draw(draw);
                 }
@@ -452,6 +537,41 @@ namespace PrintBatchMaster
                 // 存檔前強制設定密度與壓縮
                 canvas.Settings.Compression = CompressionMethod.LZW;
                 canvas.Write(output);
+            }
+        }
+
+        /// <summary>
+        /// 確保內附字型可被 ImageMagick 讀取：
+        ///   1. 從 Application.StartupPath\Fonts\{fontFileName} 找
+        ///   2. 複製到使用者 Temp 目錄底下純英文路徑（避免中文 startup path 造成 Magick 載入失敗）
+        ///   3. 找不到原檔就 throw，讓上層跳過該圖並 log 錯誤，避免靜默 fallback 到系統字型
+        ///      （這是使用者明確要求：強制用內附字型，避免跨環境字型不一致）
+        /// </summary>
+        private string EnsureBundledFont(string fontFileName)
+        {
+            string sourcePath = Path.Combine(Application.StartupPath, "Fonts", fontFileName);
+            if (!File.Exists(sourcePath))
+            {
+                throw new FileNotFoundException(
+                    $"找不到內附字型 '{fontFileName}'。預期路徑：{sourcePath}。請確認 Fonts/ 資料夾已隨程式打包。",
+                    sourcePath);
+            }
+
+            // 複製到 Temp（純英文 + 無空格路徑），避免 ImageMagick 在中文/含空格路徑下讀字型失敗
+            // （Magick.NET 14 在某些版本對含空格的字型路徑沒自動 quote，會靜默載入失敗）
+            string ext = Path.GetExtension(fontFileName);
+            string nameOnly = Path.GetFileNameWithoutExtension(fontFileName).Replace(" ", "");
+            string safeTempPath = Path.Combine(Path.GetTempPath(), nameOnly + ext);
+            try
+            {
+                File.Copy(sourcePath, safeTempPath, overwrite: true);
+                return safeTempPath;
+            }
+            catch (Exception ex)
+            {
+                // 複製失敗（例如 Temp 鎖住）就直接用原路徑試試，至少在純英文 startup path 下能成功
+                Log($"[Font] 字型複製到 Temp 失敗，改用原路徑：{ex.Message}");
+                return sourcePath;
             }
         }
 
@@ -526,8 +646,8 @@ namespace PrintBatchMaster
 
         private void SaveConfig()
         {
-            // 新版直接存色碼字串：LC=Line Color, TC=Text Color
-            var s = new { S = txtSourceDir.Text, O = txtOutputDir.Text, T = numPadTop.Value, B = numPadBottom.Value, L = numPadLeft.Value, R = numPadRight.Value, X = numTextX.Value, Y = numTextY.Value, LC = txtLineColor.Text, TC = txtTextColor.Text, FS = numFontSize.Value, Gap = numSafeGap.Value, LW= numLineWidth.Value, LP = cmbLinePos.SelectedIndex, TP = comboBox1.SelectedIndex, AT = chkAddText.Checked };
+            // 新版欄位：LC/TC=色碼, LP=定位線位置, TA=文字對齊(取代舊 TP), TO=文字下推mm
+            var s = new { S = txtSourceDir.Text, O = txtOutputDir.Text, T = numPadTop.Value, B = numPadBottom.Value, L = numPadLeft.Value, R = numPadRight.Value, X = numTextX.Value, Y = numTextY.Value, LC = txtLineColor.Text, TC = txtTextColor.Text, FS = numFontSize.Value, Gap = numSafeGap.Value, LW = numLineWidth.Value, LP = cmbLinePos.SelectedIndex, TA = comboBox1.SelectedIndex, TO = numTextOffset.Value, AT = chkAddText.Checked };
             File.WriteAllText(configPath, JsonSerializer.Serialize(s));
         }
 
@@ -559,6 +679,9 @@ namespace PrintBatchMaster
 
                 numSafeGap.Value = 2;
                 numSafeGap.Text = 2.ToString(); // 強制刷新畫面顯示
+
+                numTextOffset.Value = 5;
+                numTextOffset.Text = 5.ToString(); // 文字下推預設 5mm
 
                 return;
             }
@@ -611,14 +734,30 @@ namespace PrintBatchMaster
                         cmbLinePos.SelectedIndex = lpIdx;
                     }
 
-                    // 5. 文字起始位置
-                    if (r.TryGetProperty("TP", out var tp) && tp.TryGetInt32(out int tpIdx)
-                        && tpIdx >= 0 && tpIdx < comboBox1.Items.Count)
+                    // 5. 文字水平對齊：優先讀新版 TA (0~2)；沒有再讀舊版 TP (0~5) 做 mapping
+                    if (r.TryGetProperty("TA", out var ta) && ta.TryGetInt32(out int taIdx)
+                        && taIdx >= 0 && taIdx < comboBox1.Items.Count)
                     {
-                        comboBox1.SelectedIndex = tpIdx;
+                        comboBox1.SelectedIndex = taIdx;
+                    }
+                    else if (r.TryGetProperty("TP", out var tp) && tp.TryGetInt32(out int tpIdx))
+                    {
+                        // 舊版 6 選項: 0=左下 1=左上 2=中下 3=中上 4=右下 5=右上
+                        // 新版 3 選項: 0=靠左   1=置中     2=靠右
+                        int mapped = tpIdx switch
+                        {
+                            0 or 1 => 0, // 左 → 靠左
+                            2 or 3 => 1, // 中 → 置中
+                            4 or 5 => 2, // 右 → 靠右
+                            _ => 0
+                        };
+                        if (mapped < comboBox1.Items.Count) comboBox1.SelectedIndex = mapped;
                     }
 
-                    // 6. 是否加字
+                    // 6. 文字下推距離 (mm)
+                    SetNumericValue(numTextOffset, "TO", r, 5m); // 預設 5mm
+
+                    // 7. 是否加字
                     if (r.TryGetProperty("AT", out var at)) chkAddText.Checked = at.GetBoolean();
                 }
             }
